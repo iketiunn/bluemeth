@@ -108,16 +108,8 @@ timer: active
 
 ## Uninstall
 
-Turn sleep back on first:
-
 ```sh
-bluemeth off
-```
-
-Then remove the script:
-
-```sh
-rm -f ~/.local/bin/bluemeth
+"$HOME/.local/bin/bluemeth" off && rm -f "$HOME/.local/bin/bluemeth"
 ```
 
 ## Development
