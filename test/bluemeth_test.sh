@@ -34,6 +34,9 @@ SH
   cat > "$FAKE_BIN/pmset" <<'SH'
 #!/usr/bin/env bash
 printf 'pmset %s\n' "$*" >> "$BLUEMETH_TEST_LOG"
+if [[ "${BLUEMETH_TEST_PMSET_FAIL_ARGS:-}" == "$*" ]]; then
+  exit 77
+fi
 case "$*" in
   "-g")
     printf 'System-wide power settings:\n SleepDisabled\t\t%s\nCurrently in use:\n sleep                1\n' "$(cat "$BLUEMETH_TEST_PMSET_STATE")"
@@ -71,6 +74,7 @@ run_bluemeth() {
   BLUEMETH_TOKEN_FILE="$TOKEN_FILE" \
   BLUEMETH_TEST_LOG="$LOG_FILE" \
   BLUEMETH_TEST_PMSET_STATE="$FAKE_PMSET_STATE" \
+  BLUEMETH_TEST_PMSET_FAIL_ARGS="${BLUEMETH_TEST_PMSET_FAIL_ARGS:-}" \
   PATH="$FAKE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" \
   "$SUBJECT" "$@"
 }
@@ -242,6 +246,19 @@ test_extra_arguments_fail_without_pmset() {
   assert_file_not_contains "pmset -a disablesleep" "$LOG_FILE" "extra arguments should not change pmset"
 }
 
+test_production_token_file_ignores_environment_override() {
+  local env_override_pattern="TOKEN_FILE=\"\${BLUEMETH_TOKEN_FILE"
+  local fixed_token_pattern="TOKEN_FILE=\"\$DEFAULT_TOKEN_FILE\""
+
+  if grep -Fq "$env_override_pattern" "$SUBJECT"; then
+    printf 'production token file should not read BLUEMETH_TOKEN_FILE directly\n' >&2
+    exit 1
+  fi
+
+  assert_file_contains 'DEFAULT_TOKEN_FILE="/var/run/bluemeth/disablesleep.token"' "$SUBJECT" "script should define fixed production token path"
+  assert_file_contains "$fixed_token_pattern" "$SUBJECT" "script should use fixed production token path outside test mode"
+}
+
 test_off_removes_token_and_disables_sleepdisabled() {
   printf 'old-token\n' > "$TOKEN_FILE"
 
@@ -254,6 +271,52 @@ test_off_removes_token_and_disables_sleepdisabled() {
     printf 'token file still exists\n' >&2
     exit 1
   fi
+}
+
+test_off_pmset_failure_leaves_token() {
+  printf 'old-token\n' > "$TOKEN_FILE"
+
+  local BLUEMETH_TEST_PMSET_FAIL_ARGS="-a disablesleep 0"
+  local output
+  local status
+  set +e
+  output="$(run_bluemeth off 2>&1)"
+  status=$?
+  set -e
+
+  if [[ "$status" -eq 0 ]]; then
+    printf 'off exited 0 when pmset failed\n' >&2
+    exit 1
+  fi
+
+  assert_eq "old-token" "$(cat "$TOKEN_FILE")" "off should leave token when pmset disable fails"
+  assert_file_contains "sudo pmset -a disablesleep 0" "$LOG_FILE" "off should attempt to disable pmset"
+  assert_file_not_contains "sudo rm -f $TOKEN_FILE" "$LOG_FILE" "off should not remove token after pmset failure"
+  assert_eq "" "$output" "off should not print success when pmset fails"
+}
+
+test_enable_pmset_failure_removes_new_token() {
+  local BLUEMETH_TEST_PMSET_FAIL_ARGS="-a disablesleep 1"
+  local output
+  local status
+  set +e
+  output="$(run_bluemeth 30 2>&1)"
+  status=$?
+  set -e
+
+  if [[ "$status" -eq 0 ]]; then
+    printf 'enable exited 0 when pmset failed\n' >&2
+    exit 1
+  fi
+
+  if [[ -e "$TOKEN_FILE" ]]; then
+    printf 'enable left token after pmset failure: %s\n' "$(cat "$TOKEN_FILE")" >&2
+    exit 1
+  fi
+
+  assert_file_contains "sudo pmset -a disablesleep 1" "$LOG_FILE" "enable should attempt to set pmset"
+  assert_file_contains "sudo rm -f $TOKEN_FILE" "$LOG_FILE" "enable should roll back its token"
+  assert_eq "" "$output" "enable should not print success when pmset fails"
 }
 
 test_status_reports_sleepdisabled_and_timer_state() {
@@ -331,7 +394,10 @@ test_case "zero duration fails without pmset" test_zero_duration_fails_without_p
 test_case "one day duration is allowed" test_one_day_duration_is_allowed
 test_case "duration above one day fails without pmset" test_duration_above_one_day_fails_without_pmset
 test_case "extra arguments fail without pmset" test_extra_arguments_fail_without_pmset
+test_case "production token file ignores environment override" test_production_token_file_ignores_environment_override
 test_case "off removes token and disables SleepDisabled" test_off_removes_token_and_disables_sleepdisabled
+test_case "off pmset failure leaves token" test_off_pmset_failure_leaves_token
+test_case "enable pmset failure removes new token" test_enable_pmset_failure_removes_new_token
 test_case "status reports SleepDisabled and timer state" test_status_reports_sleepdisabled_and_timer_state
 test_case "status reports missing timer" test_status_reports_missing_timer
 test_case "newer timer token prevents older timer from turning off" test_newer_timer_token_prevents_older_timer_from_turning_off

@@ -3,9 +3,13 @@ set -euo pipefail
 
 DEFAULT_MINUTES=60
 MAX_MINUTES=1440
-TOKEN_FILE="${BLUEMETH_TOKEN_FILE:-/var/run/bluemeth/disablesleep.token}"
+DEFAULT_TOKEN_FILE="/var/run/bluemeth/disablesleep.token"
+TOKEN_FILE="$DEFAULT_TOKEN_FILE"
 
 if [[ "${BLUEMETH_TESTING:-}" == "1" ]]; then
+  if [[ -n "${BLUEMETH_TOKEN_FILE:-}" ]]; then
+    TOKEN_FILE="$BLUEMETH_TOKEN_FILE"
+  fi
   SUDO="sudo"
   PMSET="pmset"
   SLEEP="sleep"
@@ -59,6 +63,19 @@ write_token() {
 
 remove_token() {
   "$SUDO" "$RM" -f "$TOKEN_FILE"
+}
+
+remove_token_if_matches() {
+  local token="$1"
+  local current=""
+
+  if [[ -f "$TOKEN_FILE" ]]; then
+    current="$("$SUDO" "$CAT" "$TOKEN_FILE" 2>/dev/null || true)"
+  fi
+
+  if [[ "$current" == "$token" ]]; then
+    remove_token
+  fi
 }
 
 enable_disablesleep() {
@@ -139,8 +156,8 @@ case "$arg" in
     exit 0
     ;;
   off)
-    remove_token
     disable_disablesleep
+    remove_token
     echo "off"
     exit 0
     ;;
@@ -177,7 +194,17 @@ seconds=$((minutes * 60))
 token="$("$DATE" +%s)-$$-$("$UUIDGEN")"
 
 write_token "$token"
+
+set +e
 enable_disablesleep
+enable_status=$?
+set -e
+
+if (( enable_status != 0 )); then
+  remove_token_if_matches "$token"
+  exit "$enable_status"
+fi
+
 start_timer "$token" "$seconds"
 
 echo "on: ${minutes}m"
