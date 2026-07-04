@@ -2,6 +2,7 @@
 set -euo pipefail
 
 DEFAULT_MINUTES=60
+MAX_MINUTES=1440
 TOKEN_FILE="${BLUEMETH_TOKEN_FILE:-/var/run/bluemeth/disablesleep.token}"
 
 if [[ "${BLUEMETH_TESTING:-}" == "1" ]]; then
@@ -31,6 +32,7 @@ fi
 help() {
   echo "bluemeth - timed lid-close sleep disable"
   echo "usage: bluemeth [MIN=60] | off | status | -h"
+  echo "max: ${MAX_MINUTES} minutes (24h)"
   echo "uses: sudo pmset -a disablesleep, not caffeinate"
 }
 
@@ -128,6 +130,11 @@ status() {
 
 arg="${1:-$DEFAULT_MINUTES}"
 
+if [[ $# -gt 1 && "$arg" != "--expire-token" ]]; then
+  help
+  exit 1
+fi
+
 case "$arg" in
   -h|--help|help)
     help
@@ -159,6 +166,11 @@ fi
 
 if (( arg <= 0 )); then
   echo "minutes must be > 0" >&2
+  exit 1
+fi
+
+if (( arg > MAX_MINUTES )); then
+  echo "minutes must be <= ${MAX_MINUTES} (24h)" >&2
   exit 1
 fi
 

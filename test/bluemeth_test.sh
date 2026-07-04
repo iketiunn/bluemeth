@@ -194,6 +194,49 @@ test_zero_duration_fails_without_pmset() {
   assert_file_not_contains "pmset -a disablesleep" "$LOG_FILE" "zero duration should not change pmset"
 }
 
+test_one_day_duration_is_allowed() {
+  local output
+  output="$(run_bluemeth 1440)"
+
+  assert_eq "on: 1440m" "$output" "one day should be the maximum allowed duration"
+  assert_file_contains "sudo pmset -a disablesleep 1" "$LOG_FILE" "one day should enable pmset disablesleep"
+  assert_file_contains "sleep 86400" "$LOG_FILE" "one day should convert to 86400 seconds"
+}
+
+test_duration_above_one_day_fails_without_pmset() {
+  local output
+  local status
+  set +e
+  output="$(run_bluemeth 1441 2>&1)"
+  status=$?
+  set -e
+
+  if [[ "$status" -eq 0 ]]; then
+    printf 'duration above one day exited 0\n' >&2
+    exit 1
+  fi
+
+  assert_contains "minutes must be <= 1440 (24h)" "$output" "duration above one day should explain max"
+  assert_file_not_contains "pmset -a disablesleep" "$LOG_FILE" "duration above one day should not change pmset"
+}
+
+test_extra_arguments_fail_without_pmset() {
+  local output
+  local status
+  set +e
+  output="$(run_bluemeth 30 extra 2>&1)"
+  status=$?
+  set -e
+
+  if [[ "$status" -eq 0 ]]; then
+    printf 'extra arguments exited 0\n' >&2
+    exit 1
+  fi
+
+  assert_contains "usage: bluemeth [MIN=60] | off | status | -h" "$output" "extra arguments should print usage"
+  assert_file_not_contains "pmset -a disablesleep" "$LOG_FILE" "extra arguments should not change pmset"
+}
+
 test_off_removes_token_and_disables_sleepdisabled() {
   printf 'old-token\n' > "$TOKEN_FILE"
 
@@ -277,6 +320,9 @@ test_case "default duration enables disablesleep for 60 minutes" test_default_du
 test_case "explicit duration enables disablesleep for requested minutes" test_explicit_duration_enables_disablesleep_for_requested_minutes
 test_case "invalid duration fails without pmset" test_invalid_duration_fails_without_pmset
 test_case "zero duration fails without pmset" test_zero_duration_fails_without_pmset
+test_case "one day duration is allowed" test_one_day_duration_is_allowed
+test_case "duration above one day fails without pmset" test_duration_above_one_day_fails_without_pmset
+test_case "extra arguments fail without pmset" test_extra_arguments_fail_without_pmset
 test_case "off removes token and disables SleepDisabled" test_off_removes_token_and_disables_sleepdisabled
 test_case "status reports SleepDisabled and timer state" test_status_reports_sleepdisabled_and_timer_state
 test_case "status reports missing timer" test_status_reports_missing_timer

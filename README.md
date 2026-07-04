@@ -31,14 +31,16 @@ source ~/.zshrc
 ```sh
 bluemeth        # enable for 60 minutes
 bluemeth 30     # enable for 30 minutes
-bluemeth 120    # enable for 120 minutes
+bluemeth 1440   # enable for one day, the maximum allowed duration
 bluemeth off    # turn it off now
 bluemeth status # show SleepDisabled and bluemeth timer state
 bluemeth -h     # help
 ```
 
 Every command that changes sleep state uses `sudo`, because `pmset` writes
-system power settings.
+system power settings. Durations must be positive whole minutes and cannot be
+longer than `1440` minutes, or 24 hours. Invalid input exits before changing
+`pmset`.
 
 ## What It Does
 
