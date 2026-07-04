@@ -90,7 +90,6 @@ Example:
 ```text
 SleepDisabled: 1
 timer: active
-mode: pmset disablesleep, not caffeinate
 ```
 
 `SleepDisabled` comes from `pmset -g`.

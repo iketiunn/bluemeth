@@ -139,6 +139,11 @@ test_help_names_lid_close_sleep_disable() {
 
   assert_contains "timed lid-close sleep disable" "$output" "help should describe lid-close behavior"
   assert_contains "usage: bluemeth [MIN=60] | off | status | -h" "$output" "help should show usage"
+  assert_contains "max: 1440 minutes (24h)" "$output" "help should show max duration"
+  if [[ "$output" == *"caffeinate"* ]]; then
+    printf 'help should not mention caffeinate\n' >&2
+    exit 1
+  fi
 }
 
 test_default_duration_enables_disablesleep_for_60_minutes() {
@@ -260,7 +265,10 @@ test_status_reports_sleepdisabled_and_timer_state() {
 
   assert_contains "SleepDisabled: 1" "$output" "status should parse SleepDisabled"
   assert_contains "timer: active" "$output" "status should report active token"
-  assert_contains "mode: pmset disablesleep, not caffeinate" "$output" "status should distinguish caffeinate"
+  if [[ "$output" == *"caffeinate"* || "$output" == *"mode:"* ]]; then
+    printf 'status should stay terse\n' >&2
+    exit 1
+  fi
 }
 
 test_status_reports_missing_timer() {

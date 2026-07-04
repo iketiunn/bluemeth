@@ -33,7 +33,6 @@ help() {
   echo "bluemeth - timed lid-close sleep disable"
   echo "usage: bluemeth [MIN=60] | off | status | -h"
   echo "max: ${MAX_MINUTES} minutes (24h)"
-  echo "uses: sudo pmset -a disablesleep, not caffeinate"
 }
 
 token_dir() {
@@ -125,7 +124,6 @@ status() {
 
   printf 'SleepDisabled: %s\n' "$sleep_disabled"
   printf 'timer: %s\n' "$timer_state"
-  printf 'mode: pmset disablesleep, not caffeinate\n'
 }
 
 arg="${1:-$DEFAULT_MINUTES}"
