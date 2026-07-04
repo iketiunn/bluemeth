@@ -45,7 +45,7 @@ bluemeth        # enable for 60 minutes
 bluemeth 30     # enable for 30 minutes
 bluemeth 1440   # enable for one day, the maximum allowed duration
 bluemeth off    # turn it off now
-bluemeth status # show SleepDisabled and bluemeth timer state
+bluemeth status # show SleepDisabled and bluemeth token state
 bluemeth -h     # help
 ```
 
@@ -101,7 +101,7 @@ Example:
 
 ```text
 SleepDisabled: 1
-timer: active
+token: present
 ```
 
 `SleepDisabled` comes from `pmset -g`.

@@ -70,13 +70,13 @@ SH
 }
 
 run_bluemeth() {
-  BLUEMETH_TESTING=1 \
+  BLUEMETH_TEST_MODE=1 \
   BLUEMETH_TOKEN_FILE="$TOKEN_FILE" \
   BLUEMETH_TEST_LOG="$LOG_FILE" \
   BLUEMETH_TEST_PMSET_STATE="$FAKE_PMSET_STATE" \
   BLUEMETH_TEST_PMSET_FAIL_ARGS="${BLUEMETH_TEST_PMSET_FAIL_ARGS:-}" \
   PATH="$FAKE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" \
-  "$SUBJECT" "$@"
+  "$SUBJECT" --bluemeth-test "$@"
 }
 
 assert_eq() {
@@ -106,7 +106,7 @@ assert_file_contains() {
   local file="$2"
   local message="$3"
 
-  if ! grep -Fq "$needle" "$file"; then
+  if ! grep -Fq -- "$needle" "$file"; then
     printf 'not ok - %s\nmissing: %s\nfile:\n%s\n' "$message" "$needle" "$(cat "$file" 2>/dev/null || true)" >&2
     exit 1
   fi
@@ -117,7 +117,7 @@ assert_file_not_contains() {
   local file="$2"
   local message="$3"
 
-  if grep -Fq "$needle" "$file"; then
+  if grep -Fq -- "$needle" "$file"; then
     printf 'not ok - %s\nunexpected: %s\nfile:\n%s\n' "$message" "$needle" "$(cat "$file" 2>/dev/null || true)" >&2
     exit 1
   fi
@@ -246,6 +246,38 @@ test_extra_arguments_fail_without_pmset() {
   assert_file_not_contains "pmset -a disablesleep" "$LOG_FILE" "extra arguments should not change pmset"
 }
 
+test_expire_token_requires_test_mode() {
+  local output
+  local status
+  set +e
+  output="$("$SUBJECT" --expire-token anything 2>&1)"
+  status=$?
+  set -e
+
+  if [[ "$status" -eq 0 ]]; then
+    printf 'expire-token exited 0 outside test mode\n' >&2
+    exit 1
+  fi
+
+  assert_contains "usage: bluemeth [MIN=60] | off | status | -h" "$output" "expire-token should be unavailable outside test mode"
+}
+
+test_hidden_test_flag_requires_env_sentinel() {
+  local output
+  local status
+  set +e
+  output="$("$SUBJECT" --bluemeth-test status 2>&1)"
+  status=$?
+  set -e
+
+  if [[ "$status" -eq 0 ]]; then
+    printf 'hidden test flag exited 0 without env sentinel\n' >&2
+    exit 1
+  fi
+
+  assert_contains "usage: bluemeth [MIN=60] | off | status | -h" "$output" "hidden test flag should require env sentinel"
+}
+
 test_production_token_file_ignores_environment_override() {
   local env_override_pattern="TOKEN_FILE=\"\${BLUEMETH_TOKEN_FILE"
   local fixed_token_pattern="TOKEN_FILE=\"\$DEFAULT_TOKEN_FILE\""
@@ -257,6 +289,24 @@ test_production_token_file_ignores_environment_override() {
 
   assert_file_contains 'DEFAULT_TOKEN_FILE="/var/run/bluemeth/disablesleep.token"' "$SUBJECT" "script should define fixed production token path"
   assert_file_contains "$fixed_token_pattern" "$SUBJECT" "script should use fixed production token path outside test mode"
+}
+
+test_test_mode_requires_hidden_flag() {
+  if grep -Fq 'BLUEMETH_TESTING' "$SUBJECT"; then
+    printf 'test mode should not be enabled by environment alone\n' >&2
+    exit 1
+  fi
+
+  assert_file_contains '--bluemeth-test' "$SUBJECT" "script should require hidden test flag for command injection"
+  assert_file_contains 'BLUEMETH_TEST_MODE' "$SUBJECT" "script should require env sentinel for command injection"
+}
+
+test_production_timer_is_armed_by_privileged_shell() {
+  local self_reexec_pattern="\"\$0\" --expire-token"
+
+  assert_file_contains '/usr/bin/pmset -a disablesleep 0' "$SUBJECT" "production expiry should disable sleep inside privileged shell"
+  assert_file_contains 'if /usr/bin/pmset -a disablesleep 0; then' "$SUBJECT" "production expiry should remove token only after pmset disable succeeds"
+  assert_file_not_contains "$self_reexec_pattern" "$SUBJECT" "production expiry should not re-run script after sudo timestamp expires"
 }
 
 test_off_removes_token_and_disables_sleepdisabled() {
@@ -319,7 +369,7 @@ test_enable_pmset_failure_removes_new_token() {
   assert_eq "" "$output" "enable should not print success when pmset fails"
 }
 
-test_status_reports_sleepdisabled_and_timer_state() {
+test_status_reports_sleepdisabled_and_token_state() {
   printf '1\n' > "$FAKE_PMSET_STATE"
   printf 'token\n' > "$TOKEN_FILE"
 
@@ -327,7 +377,7 @@ test_status_reports_sleepdisabled_and_timer_state() {
   output="$(run_bluemeth status)"
 
   assert_contains "SleepDisabled: 1" "$output" "status should parse SleepDisabled"
-  assert_contains "timer: active" "$output" "status should report active token"
+  assert_contains "token: present" "$output" "status should report token presence without promising live timer"
   if [[ "$output" == *"caffeinate"* || "$output" == *"mode:"* ]]; then
     printf 'status should stay terse\n' >&2
     exit 1
@@ -339,16 +389,16 @@ test_status_reports_missing_timer() {
   output="$(run_bluemeth status)"
 
   assert_contains "SleepDisabled: 0" "$output" "status should parse disabled SleepDisabled"
-  assert_contains "timer: none" "$output" "status should report missing token"
+  assert_contains "token: none" "$output" "status should report missing token"
 }
 
 test_newer_timer_token_prevents_older_timer_from_turning_off() {
-  BLUEMETH_TESTING=1 \
+  BLUEMETH_TEST_MODE=1 \
   BLUEMETH_TOKEN_FILE="$TOKEN_FILE" \
   BLUEMETH_TEST_LOG="$LOG_FILE" \
   BLUEMETH_TEST_PMSET_STATE="$FAKE_PMSET_STATE" \
   PATH="$FAKE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" \
-  "$SUBJECT" 30 >/dev/null
+  "$SUBJECT" --bluemeth-test 30 >/dev/null
 
   if [[ ! -f "$TOKEN_FILE" ]]; then
     printf 'newer timer did not create token file\n' >&2
@@ -358,12 +408,12 @@ test_newer_timer_token_prevents_older_timer_from_turning_off() {
   local newer_token
   newer_token="$(cat "$TOKEN_FILE")"
 
-  BLUEMETH_TESTING=1 \
+  BLUEMETH_TEST_MODE=1 \
   BLUEMETH_TOKEN_FILE="$TOKEN_FILE" \
   BLUEMETH_TEST_LOG="$LOG_FILE" \
   BLUEMETH_TEST_PMSET_STATE="$FAKE_PMSET_STATE" \
   PATH="$FAKE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" \
-  "$SUBJECT" --expire-token stale-token >/dev/null
+  "$SUBJECT" --bluemeth-test --expire-token stale-token >/dev/null
 
   assert_eq "$newer_token" "$(cat "$TOKEN_FILE")" "stale timer should leave newer token in place"
   assert_file_not_contains "sudo pmset -a disablesleep 0" "$LOG_FILE" "stale timer should not disable SleepDisabled"
@@ -372,12 +422,12 @@ test_newer_timer_token_prevents_older_timer_from_turning_off() {
 test_matching_timer_token_turns_off() {
   printf 'matching-token\n' > "$TOKEN_FILE"
 
-  BLUEMETH_TESTING=1 \
+  BLUEMETH_TEST_MODE=1 \
   BLUEMETH_TOKEN_FILE="$TOKEN_FILE" \
   BLUEMETH_TEST_LOG="$LOG_FILE" \
   BLUEMETH_TEST_PMSET_STATE="$FAKE_PMSET_STATE" \
   PATH="$FAKE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" \
-  "$SUBJECT" --expire-token matching-token >/dev/null
+  "$SUBJECT" --bluemeth-test --expire-token matching-token >/dev/null
 
   assert_file_contains "sudo pmset -a disablesleep 0" "$LOG_FILE" "matching timer should disable SleepDisabled"
   if [[ -e "$TOKEN_FILE" ]]; then
@@ -394,11 +444,15 @@ test_case "zero duration fails without pmset" test_zero_duration_fails_without_p
 test_case "one day duration is allowed" test_one_day_duration_is_allowed
 test_case "duration above one day fails without pmset" test_duration_above_one_day_fails_without_pmset
 test_case "extra arguments fail without pmset" test_extra_arguments_fail_without_pmset
+test_case "expire token requires test mode" test_expire_token_requires_test_mode
+test_case "hidden test flag requires env sentinel" test_hidden_test_flag_requires_env_sentinel
 test_case "production token file ignores environment override" test_production_token_file_ignores_environment_override
+test_case "test mode requires hidden flag" test_test_mode_requires_hidden_flag
+test_case "production timer is armed by privileged shell" test_production_timer_is_armed_by_privileged_shell
 test_case "off removes token and disables SleepDisabled" test_off_removes_token_and_disables_sleepdisabled
 test_case "off pmset failure leaves token" test_off_pmset_failure_leaves_token
 test_case "enable pmset failure removes new token" test_enable_pmset_failure_removes_new_token
-test_case "status reports SleepDisabled and timer state" test_status_reports_sleepdisabled_and_timer_state
+test_case "status reports SleepDisabled and token state" test_status_reports_sleepdisabled_and_token_state
 test_case "status reports missing timer" test_status_reports_missing_timer
 test_case "newer timer token prevents older timer from turning off" test_newer_timer_token_prevents_older_timer_from_turning_off
 test_case "matching timer token turns off" test_matching_timer_token_turns_off
