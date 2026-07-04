@@ -1,6 +1,8 @@
 # bluemeth
 
-Timed lid-close sleep disable for macOS.
+Keep your agent alive when the lid is closed.
+
+Timed lid-close sleep disable for macOS. Tiny script, sharp edge, clear timer.
 
 `bluemeth` is a tiny wrapper around:
 
@@ -12,6 +14,16 @@ It is intentionally not a `caffeinate` clone. `caffeinate` creates temporary
 I/O Kit power assertions for idle sleep or command-scoped work. `bluemeth`
 changes the macOS `pmset` `disablesleep` setting, which is the rough tool for
 the "keep running when I close the MacBook lid" case.
+
+## Safety First
+
+- This changes system-wide macOS power settings with `sudo`.
+- It is for lid-close sleep behavior, not general power management.
+- Maximum runtime is `1440` minutes, or 24 hours.
+- Bad input exits before changing `pmset`.
+- It does not manage display sleep, hibernation, standby, or external-display
+  clamshell mode.
+- Timer state lives in `/var/run`; it does not need to survive reboot.
 
 ## Install
 
@@ -107,14 +119,6 @@ Then remove the script:
 ```sh
 rm -f ~/.local/bin/bluemeth
 ```
-
-## Safety Notes
-
-- This changes system-wide macOS power settings.
-- It may behave differently across macOS versions and hardware.
-- It does not try to manage display sleep, idle assertions, hibernation,
-  standby, or external-display clamshell mode.
-- Timer state lives in `/var/run`, so it does not need to survive reboot.
 
 ## Development
 
