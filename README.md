@@ -16,9 +16,7 @@ the "keep running when I close the MacBook lid" case.
 ## Install
 
 ```sh
-mkdir -p ~/.local/bin
-curl -fsSL https://raw.githubusercontent.com/iketiunn/bluemeth/main/bin/bluemeth -o ~/.local/bin/bluemeth
-chmod +x ~/.local/bin/bluemeth
+mkdir -p "$HOME/.local/bin" && curl -fsSL https://raw.githubusercontent.com/iketiunn/bluemeth/main/bin/bluemeth -o "$HOME/.local/bin/bluemeth" && chmod +x "$HOME/.local/bin/bluemeth"
 ```
 
 Make sure `~/.local/bin` is in your shell path:
