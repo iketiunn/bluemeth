@@ -12,19 +12,13 @@ sudo pmset -a disablesleep 1
 ## Install latest stable
 
 ```sh
-mkdir -p "$HOME/.local/bin" &&
-curl -fsSL https://raw.githubusercontent.com/iketiunn/bluemeth/v1.0.0/bin/bluemeth \
-  -o "$HOME/.local/bin/bluemeth" &&
-chmod +x "$HOME/.local/bin/bluemeth"
+curl -fsSL https://raw.githubusercontent.com/iketiunn/bluemeth/v1.0.1/install.sh | sh
 ```
 
 ## Install main
 
 ```sh
-mkdir -p "$HOME/.local/bin" &&
-curl -fsSL https://raw.githubusercontent.com/iketiunn/bluemeth/main/bin/bluemeth \
-  -o "$HOME/.local/bin/bluemeth" &&
-chmod +x "$HOME/.local/bin/bluemeth"
+curl -fsSL https://raw.githubusercontent.com/iketiunn/bluemeth/main/install.sh | sh -s -- main
 ```
 
 Make sure `~/.local/bin` is in your `PATH`.
@@ -92,6 +86,6 @@ Do not put the MacBook in a bag while active. Tiny CLI, real heat, bad physics.
 
 ```sh
 bash test/smoke.sh
-shellcheck bin/bluemeth test/smoke.sh
+shellcheck bin/bluemeth install.sh test/smoke.sh
 git diff --check
 ```
