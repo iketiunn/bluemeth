@@ -9,7 +9,16 @@ wrapper around:
 sudo pmset -a disablesleep 1
 ```
 
-## Install
+## Install latest stable
+
+```sh
+mkdir -p "$HOME/.local/bin" &&
+curl -fsSL https://raw.githubusercontent.com/iketiunn/bluemeth/v1.0.0/bin/bluemeth \
+  -o "$HOME/.local/bin/bluemeth" &&
+chmod +x "$HOME/.local/bin/bluemeth"
+```
+
+## Install main
 
 ```sh
 mkdir -p "$HOME/.local/bin" &&
