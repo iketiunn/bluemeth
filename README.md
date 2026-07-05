@@ -45,7 +45,7 @@ bluemeth status
 ```
 
 `sleep` shows the current macOS sleep-disabled state.
-`timer` shows bluemeth's stored expiry marker.
+`timer` shows the remaining time from bluemeth's stored expiry.
 
 `timer: expired` means the marker is stale; run `bluemeth off` to restore normal
 sleep behavior and clear it.

@@ -96,18 +96,17 @@ if (( arg > MAX_MINUTES )); then
 fi
 
 minutes="$arg"
-now="$(/bin/date +%s)"
 seconds=$((minutes * 60))
-expires_at=$((now + seconds))
-token="${now}-$$-$(/usr/bin/uuidgen)"
+token="$(/bin/date +%s)-$$-$(/usr/bin/uuidgen)"
 
 # shellcheck disable=SC2016
 /usr/bin/sudo /bin/sh -c '
   token_file="$1"
   token="$2"
   seconds="$3"
-  expires_at="$4"
   token_dir="${token_file%/*}"
+  now="$(/bin/date +%s)"
+  expires_at=$((now + seconds))
 
   /bin/mkdir -p "$token_dir"
   /bin/chmod 755 "$token_dir"
@@ -139,6 +138,6 @@ token="${now}-$$-$(/usr/bin/uuidgen)"
       fi
     fi
   ) >/dev/null 2>&1 </dev/null &
-' sh "$TOKEN_FILE" "$token" "$seconds" "$expires_at"
+' sh "$TOKEN_FILE" "$token" "$seconds"
 
 echo "on: ${minutes}m"
