@@ -36,6 +36,20 @@ Timer state lives in `/var/run/bluemeth/disablesleep.token`, so it does not
 survive reboot. Newer timers replace older timer tokens, which prevents an old
 timer from turning sleep back on during a newer run.
 
+## Status
+
+```sh
+bluemeth status
+# sleep: disabled
+# timer: 42m left
+```
+
+`sleep` shows the current macOS sleep-disabled state.
+`timer` shows bluemeth's stored expiry marker.
+
+`timer: expired` means the marker is stale; run `bluemeth off` to restore normal
+sleep behavior and clear it.
+
 ## Why not caffeinate?
 
 `bluemeth` uses:

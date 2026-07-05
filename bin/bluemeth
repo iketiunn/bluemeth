@@ -12,18 +12,45 @@ help() {
 }
 
 status() {
-  local pmset_output
+  local expires_at left now pmset_output sleep_state
   pmset_output="$(/usr/bin/pmset -g 2>/dev/null || true)"
 
-  printf '%s\n' "$pmset_output" | /usr/bin/awk '
+  sleep_state="$(printf '%s\n' "$pmset_output" | /usr/bin/awk '
     $1 == "SleepDisabled" { value = $2 }
     END {
-      if (value == "") value = "unknown"
-      print "SleepDisabled:", value
+      if (value == "1") print "disabled"
+      else if (value == "0") print "enabled"
+      else print "unknown"
     }
-  '
+  ')"
 
-  [[ -f "$TOKEN_FILE" ]] && echo "token: present" || echo "token: none"
+  echo "sleep: ${sleep_state}"
+
+  if [[ ! -f "$TOKEN_FILE" ]]; then
+    echo "timer: none"
+    return 0
+  fi
+
+  read -r _token expires_at < "$TOKEN_FILE" || {
+    echo "timer: unknown"
+    return 0
+  }
+
+  if [[ ! "$expires_at" =~ ^[0-9]+$ ]]; then
+    echo "timer: unknown"
+    return 0
+  fi
+
+  now="$(/bin/date +%s)"
+  left=$((expires_at - now))
+
+  if (( left <= 0 )); then
+    echo "timer: expired"
+  elif (( left < 60 )); then
+    echo "timer: <1m left"
+  else
+    echo "timer: $(((left + 59) / 60))m left"
+  fi
 }
 
 arg="${1:-$DEFAULT_MINUTES}"
@@ -69,24 +96,31 @@ if (( arg > MAX_MINUTES )); then
 fi
 
 minutes="$arg"
+now="$(/bin/date +%s)"
 seconds=$((minutes * 60))
-token="$(/bin/date +%s)-$$-$(/usr/bin/uuidgen)"
+expires_at=$((now + seconds))
+token="${now}-$$-$(/usr/bin/uuidgen)"
 
 # shellcheck disable=SC2016
 /usr/bin/sudo /bin/sh -c '
   token_file="$1"
   token="$2"
   seconds="$3"
+  expires_at="$4"
   token_dir="${token_file%/*}"
 
   /bin/mkdir -p "$token_dir"
   /bin/chmod 755 "$token_dir"
 
   umask 022
-  printf "%s\n" "$token" > "$token_file"
+  printf "%s %s\n" "$token" "$expires_at" > "$token_file"
 
   if ! /usr/bin/pmset -a disablesleep 1; then
-    if [ -f "$token_file" ] && [ "$(/bin/cat "$token_file")" = "$token" ]; then
+    current_token=""
+    if [ -f "$token_file" ]; then
+      read -r current_token _ < "$token_file" || current_token=""
+    fi
+    if [ "$current_token" = "$token" ]; then
       /bin/rm -f "$token_file"
     fi
     exit 1
@@ -95,12 +129,16 @@ token="$(/bin/date +%s)-$$-$(/usr/bin/uuidgen)"
   (
     /bin/sleep "$seconds"
 
-    if [ -f "$token_file" ] && [ "$(/bin/cat "$token_file")" = "$token" ]; then
+    current_token=""
+    if [ -f "$token_file" ]; then
+      read -r current_token _ < "$token_file" || current_token=""
+    fi
+    if [ "$current_token" = "$token" ]; then
       if /usr/bin/pmset -a disablesleep 0; then
         /bin/rm -f "$token_file"
       fi
     fi
   ) >/dev/null 2>&1 </dev/null &
-' sh "$TOKEN_FILE" "$token" "$seconds"
+' sh "$TOKEN_FILE" "$token" "$seconds" "$expires_at"
 
 echo "on: ${minutes}m"
