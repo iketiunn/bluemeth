@@ -10,6 +10,11 @@ grep -F 'sleep:' bin/bluemeth >/dev/null
 grep -F 'timer:' bin/bluemeth >/dev/null
 grep -F 'm left' bin/bluemeth >/dev/null
 
+if ! grep -F '  set -e' bin/bluemeth >/dev/null; then
+  echo 'privileged enable block must fail before pmset when marker setup fails' >&2
+  exit 1
+fi
+
 # shellcheck disable=SC2016
 if grep -F 'expires_at="$4"' bin/bluemeth >/dev/null; then
   echo 'expires_at must be computed after sudo authentication' >&2

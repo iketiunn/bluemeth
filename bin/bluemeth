@@ -101,6 +101,8 @@ token="$(/bin/date +%s)-$$-$(/usr/bin/uuidgen)"
 
 # shellcheck disable=SC2016
 /usr/bin/sudo /bin/sh -c '
+  set -e
+
   token_file="$1"
   token="$2"
   seconds="$3"
