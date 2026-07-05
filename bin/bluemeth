@@ -3,196 +3,32 @@ set -euo pipefail
 
 DEFAULT_MINUTES=60
 MAX_MINUTES=1440
-DEFAULT_TOKEN_FILE="/var/run/bluemeth/disablesleep.token"
-TOKEN_FILE="$DEFAULT_TOKEN_FILE"
-TEST_MODE=0
+TOKEN_FILE="/var/run/bluemeth/disablesleep.token"
 
 help() {
-  echo "bluemeth - timed lid-close sleep disable"
+  echo "bluemeth - timed macOS disablesleep"
   echo "usage: bluemeth [MIN=60] | off | status | -h"
-  echo "max: ${MAX_MINUTES} minutes (24h)"
-}
-
-if [[ "${1:-}" == "--bluemeth-test" && "${BLUEMETH_TEST_MODE:-}" == "1" ]]; then
-  TEST_MODE=1
-  shift
-elif [[ "${1:-}" == "--bluemeth-test" ]]; then
-  help
-  exit 1
-fi
-
-if (( TEST_MODE )); then
-  if [[ -n "${BLUEMETH_TOKEN_FILE:-}" ]]; then
-    TOKEN_FILE="$BLUEMETH_TOKEN_FILE"
-  fi
-  SUDO="sudo"
-  PMSET="pmset"
-  SLEEP="sleep"
-  UUIDGEN="uuidgen"
-  DATE="date"
-  SH="sh"
-  MKDIR="mkdir"
-  CHMOD="chmod"
-  RM="rm"
-  CAT="cat"
-else
-  SUDO="/usr/bin/sudo"
-  PMSET="/usr/bin/pmset"
-  SLEEP="/bin/sleep"
-  UUIDGEN="/usr/bin/uuidgen"
-  DATE="/bin/date"
-  SH="/bin/sh"
-  MKDIR="/bin/mkdir"
-  CHMOD="/bin/chmod"
-  RM="/bin/rm"
-  CAT="/bin/cat"
-fi
-
-token_dir() {
-  if [[ "$TOKEN_FILE" == */* ]]; then
-    printf '%s\n' "${TOKEN_FILE%/*}"
-  else
-    printf '.\n'
-  fi
-}
-
-ensure_token_dir() {
-  local dir
-  dir="$(token_dir)"
-  "$SUDO" "$MKDIR" -p "$dir"
-  "$SUDO" "$CHMOD" 755 "$dir"
-}
-
-write_token() {
-  local token="$1"
-  ensure_token_dir
-  # shellcheck disable=SC2016
-  "$SUDO" "$SH" -c 'umask 022; printf "%s\n" "$1" > "$2"' sh "$token" "$TOKEN_FILE"
-}
-
-remove_token() {
-  "$SUDO" "$RM" -f "$TOKEN_FILE"
-}
-
-remove_token_if_matches() {
-  local token="$1"
-  local current=""
-
-  if [[ -f "$TOKEN_FILE" ]]; then
-    current="$("$SUDO" "$CAT" "$TOKEN_FILE" 2>/dev/null || true)"
-  fi
-
-  if [[ "$current" == "$token" ]]; then
-    remove_token
-  fi
-}
-
-enable_disablesleep() {
-  "$SUDO" "$PMSET" -a disablesleep 1
-}
-
-disable_disablesleep() {
-  "$SUDO" "$PMSET" -a disablesleep 0
-}
-
-activate_disablesleep() {
-  local token="$1"
-  local seconds="$2"
-  local enable_status
-
-  if (( TEST_MODE )); then
-    write_token "$token"
-
-    set +e
-    enable_disablesleep
-    enable_status=$?
-    set -e
-
-    if (( enable_status != 0 )); then
-      remove_token_if_matches "$token"
-      return "$enable_status"
-    fi
-
-    "$SLEEP" "$seconds" >/dev/null 2>&1 </dev/null
-    return 0
-  fi
-
-  # shellcheck disable=SC2016
-  "$SUDO" "$SH" -c '
-    token_file="$1"
-    token="$2"
-    seconds="$3"
-    token_dir="${token_file%/*}"
-
-    /bin/mkdir -p "$token_dir"
-    /bin/chmod 755 "$token_dir"
-    umask 022
-    printf "%s\n" "$token" > "$token_file"
-
-    if ! /usr/bin/pmset -a disablesleep 1; then
-      if [ -f "$token_file" ] && [ "$(/bin/cat "$token_file")" = "$token" ]; then
-        /bin/rm -f "$token_file"
-      fi
-      exit 1
-    fi
-
-    (
-      /bin/sleep "$seconds"
-
-      if [ -f "$token_file" ] && [ "$(/bin/cat "$token_file")" = "$token" ]; then
-        if /usr/bin/pmset -a disablesleep 0; then
-          /bin/rm -f "$token_file"
-        fi
-      fi
-    ) >/dev/null 2>&1 </dev/null &
-  ' sh "$TOKEN_FILE" "$token" "$seconds"
-}
-
-parse_sleep_disabled() {
-  local line name value
-  while IFS= read -r line; do
-    read -r name value <<< "$line"
-    if [[ "$name" == "SleepDisabled" ]]; then
-      printf '%s\n' "${value:-unknown}"
-      return 0
-    fi
-  done
-
-  printf 'unknown\n'
-}
-
-expire_token() {
-  local token="$1"
-  local current=""
-
-  if [[ -f "$TOKEN_FILE" ]]; then
-    current="$("$SUDO" "$CAT" "$TOKEN_FILE" 2>/dev/null || true)"
-  fi
-
-  if [[ "$current" == "$token" ]]; then
-    disable_disablesleep
-    remove_token
-  fi
+  echo "max: ${MAX_MINUTES}m"
 }
 
 status() {
-  local pmset_output sleep_disabled token_state
-  pmset_output="$("$PMSET" -g)"
-  sleep_disabled="$(printf '%s\n' "$pmset_output" | parse_sleep_disabled)"
+  local pmset_output
+  pmset_output="$(/usr/bin/pmset -g 2>/dev/null || true)"
 
-  if [[ -f "$TOKEN_FILE" ]]; then
-    token_state="present"
-  else
-    token_state="none"
-  fi
+  printf '%s\n' "$pmset_output" | /usr/bin/awk '
+    $1 == "SleepDisabled" { value = $2 }
+    END {
+      if (value == "") value = "unknown"
+      print "SleepDisabled:", value
+    }
+  '
 
-  printf 'SleepDisabled: %s\n' "$sleep_disabled"
-  printf 'token: %s\n' "$token_state"
+  [[ -f "$TOKEN_FILE" ]] && echo "token: present" || echo "token: none"
 }
 
 arg="${1:-$DEFAULT_MINUTES}"
 
-if [[ $# -gt 1 && "$arg" != "--expire-token" ]]; then
+if [[ $# -gt 1 ]]; then
   help
   exit 1
 fi
@@ -202,25 +38,17 @@ case "$arg" in
     help
     exit 0
     ;;
-  off)
-    disable_disablesleep
-    remove_token
-    echo "off"
-    exit 0
-    ;;
   status)
     status
     exit 0
     ;;
-  --expire-token)
-    if (( ! TEST_MODE )); then
-      help
-      exit 1
-    fi
-    if [[ $# -ne 2 ]]; then
-      exit 64
-    fi
-    expire_token "$2"
+  off)
+    # shellcheck disable=SC2016
+    /usr/bin/sudo /bin/sh -c '
+      token_file="$1"
+      /usr/bin/pmset -a disablesleep 0 && /bin/rm -f "$token_file"
+    ' sh "$TOKEN_FILE"
+    echo "off"
     exit 0
     ;;
 esac
@@ -236,13 +64,43 @@ if (( arg <= 0 )); then
 fi
 
 if (( arg > MAX_MINUTES )); then
-  echo "minutes must be <= ${MAX_MINUTES} (24h)" >&2
+  echo "minutes must be <= ${MAX_MINUTES}" >&2
   exit 1
 fi
 
 minutes="$arg"
 seconds=$((minutes * 60))
-token="$("$DATE" +%s)-$$-$("$UUIDGEN")"
+token="$(/bin/date +%s)-$$-$(/usr/bin/uuidgen)"
 
-activate_disablesleep "$token" "$seconds"
+# shellcheck disable=SC2016
+/usr/bin/sudo /bin/sh -c '
+  token_file="$1"
+  token="$2"
+  seconds="$3"
+  token_dir="${token_file%/*}"
+
+  /bin/mkdir -p "$token_dir"
+  /bin/chmod 755 "$token_dir"
+
+  umask 022
+  printf "%s\n" "$token" > "$token_file"
+
+  if ! /usr/bin/pmset -a disablesleep 1; then
+    if [ -f "$token_file" ] && [ "$(/bin/cat "$token_file")" = "$token" ]; then
+      /bin/rm -f "$token_file"
+    fi
+    exit 1
+  fi
+
+  (
+    /bin/sleep "$seconds"
+
+    if [ -f "$token_file" ] && [ "$(/bin/cat "$token_file")" = "$token" ]; then
+      if /usr/bin/pmset -a disablesleep 0; then
+        /bin/rm -f "$token_file"
+      fi
+    fi
+  ) >/dev/null 2>&1 </dev/null &
+' sh "$TOKEN_FILE" "$token" "$seconds"
+
 echo "on: ${minutes}m"
