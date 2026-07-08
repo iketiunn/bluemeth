@@ -1,5 +1,7 @@
 # bluemeth
 
+![BlueMeth](assets/hero.webp)
+
 Timed macOS `pmset disablesleep`.
 
 Keeps a MacBook running for a fixed time when the lid is closed. It is a tiny
