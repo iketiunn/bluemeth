@@ -30,12 +30,18 @@ Make sure `~/.local/bin` is in your `PATH`.
 ```sh
 bluemeth        # 60 minutes
 bluemeth 30     # 30 minutes
+bluemeth 180 --force
 bluemeth off
 bluemeth status
 bluemeth -h
 ```
 
-Max duration: `1440` minutes.
+Normal maximum: `120` minutes. Use `--force` for longer sessions, up to the
+absolute maximum of `1440` minutes (24 hours).
+
+Bluemeth refuses to start if sleep is already disabled without an active
+Bluemeth timer. Resolve the existing owner first, or run `bluemeth off` if you
+intend to restore normal sleep.
 
 Timer state lives in `/var/run/bluemeth/disablesleep.token`, so it does not
 survive reboot. Newer timers replace older timer tokens, which prevents an old
@@ -89,7 +95,9 @@ caffeinate -t 3600
 
 This changes system-wide macOS power settings with `sudo`.
 
-Do not put the MacBook in a bag while active. Tiny CLI, real heat, bad physics.
+Every activation warns that a closed, running MacBook may overheat in a bag or
+sleeve. Keep it ventilated and use your judgment; the timer is not a thermal
+safety guarantee.
 
 ## Uninstall
 

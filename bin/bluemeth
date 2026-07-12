@@ -2,14 +2,30 @@
 set -euo pipefail
 
 DEFAULT_MINUTES=60
-MAX_MINUTES=1440
+MAX_MINUTES=120
+ABSOLUTE_MAX_MINUTES=1440
 TOKEN_FILE="/var/run/bluemeth/disablesleep.token"
 LOCK_FILE="/var/run/bluemeth.lock"
 
 help() {
   echo "bluemeth - timed macOS disablesleep"
-  echo "usage: bluemeth [MIN=60] | off | status | -h"
-  echo "max: ${MAX_MINUTES}m"
+  echo "usage: bluemeth [MIN=60] [--force] | off | status | -h"
+  echo "max: ${MAX_MINUTES}m (${ABSOLUTE_MAX_MINUTES}m with --force)"
+}
+
+with_lock() {
+  # shellcheck disable=SC2016
+  /usr/bin/sudo /bin/sh -c '
+    set -e
+    lock_file="$1"
+    shift
+
+    umask 077
+    /usr/bin/touch "$lock_file"
+    /bin/chmod 600 "$lock_file"
+
+    exec /usr/bin/lockf -k "$lock_file" "$@"
+  ' sh "$LOCK_FILE" "$@"
 }
 
 status() {
@@ -54,25 +70,41 @@ status() {
   fi
 }
 
-arg="${1:-$DEFAULT_MINUTES}"
+if [[ $# -eq 0 ]]; then
+  arg="$DEFAULT_MINUTES"
+else
+  arg="$1"
+fi
+force=0
 
-if [[ $# -gt 1 ]]; then
+if [[ $# -gt 2 ]]; then
   help
   exit 1
 fi
 
+if [[ $# -eq 2 ]]; then
+  if [[ "$2" != "--force" ]]; then
+    help
+    exit 1
+  fi
+  force=1
+fi
+
 case "$arg" in
   -h|--help|help)
+    [[ "$force" -eq 0 ]] || { help; exit 1; }
     help
     exit 0
     ;;
   status)
+    [[ "$force" -eq 0 ]] || { help; exit 1; }
     status
     exit 0
     ;;
   off)
+    [[ "$force" -eq 0 ]] || { help; exit 1; }
     # shellcheck disable=SC2016
-    /usr/bin/sudo /usr/bin/lockf -k "$LOCK_FILE" /bin/sh -c '
+    with_lock /bin/sh -c '
       token_file="$1"
       if ! /usr/bin/pmset -a disablesleep 0; then
         exit 1
@@ -81,7 +113,8 @@ case "$arg" in
       /bin/rm -f "$token_file"
 
       root_domain="$(/usr/sbin/ioreg -r -n IOPMrootDomain -d 1 -l -w 0 2>/dev/null || true)"
-      if printf "%s\n" "$root_domain" | /usr/bin/grep -Fq "\"AppleClamshellState\" = Yes"; then
+      if printf "%s\n" "$root_domain" | /usr/bin/grep -Fq "\"AppleClamshellState\" = Yes" &&
+         printf "%s\n" "$root_domain" | /usr/bin/grep -Fq "\"AppleClamshellCausesSleep\" = Yes"; then
         /usr/bin/pmset sleepnow
       fi
     ' sh "$TOKEN_FILE"
@@ -102,8 +135,13 @@ if (( minutes <= 0 )); then
   exit 1
 fi
 
-if (( minutes > MAX_MINUTES )); then
-  echo "minutes must be <= ${MAX_MINUTES}" >&2
+if (( minutes > ABSOLUTE_MAX_MINUTES )); then
+  echo "minutes must be <= ${ABSOLUTE_MAX_MINUTES}" >&2
+  exit 1
+fi
+
+if (( minutes > MAX_MINUTES && force == 0 )); then
+  echo "minutes above ${MAX_MINUTES} require --force" >&2
   exit 1
 fi
 
@@ -123,7 +161,8 @@ expire_script='
       /bin/rm -f "$token_file"
 
       root_domain="$(/usr/sbin/ioreg -r -n IOPMrootDomain -d 1 -l -w 0 2>/dev/null || true)"
-      if printf "%s\n" "$root_domain" | /usr/bin/grep -Fq "\"AppleClamshellState\" = Yes"; then
+      if printf "%s\n" "$root_domain" | /usr/bin/grep -Fq "\"AppleClamshellState\" = Yes" &&
+         printf "%s\n" "$root_domain" | /usr/bin/grep -Fq "\"AppleClamshellCausesSleep\" = Yes"; then
         /usr/bin/pmset sleepnow
       fi
     fi
@@ -131,7 +170,7 @@ expire_script='
 '
 
 # shellcheck disable=SC2016
-/usr/bin/sudo /usr/bin/lockf -k "$LOCK_FILE" /bin/sh -c '
+with_lock /bin/sh -c '
   set -e
 
   token_file="$1"
@@ -142,12 +181,49 @@ expire_script='
   token_dir="${token_file%/*}"
   now="$(/bin/date +%s)"
   expires_at=$((now + seconds))
+  previous_token=""
+  previous_expires_at=""
+
+  sleep_disabled="$(/usr/bin/pmset -g 2>/dev/null | /usr/bin/awk '\''
+    $1 == "SleepDisabled" { value = $2 }
+    END { print value }
+  '\'' || true)"
+  if [ "$sleep_disabled" != "0" ] && [ "$sleep_disabled" != "1" ]; then
+    echo "unable to determine current sleep state" >&2
+    exit 1
+  fi
+  if [ "$sleep_disabled" = "1" ]; then
+    active_timer=0
+    existing_token=""
+    existing_expires_at=""
+    if [ -f "$token_file" ]; then
+      read -r existing_token existing_expires_at < "$token_file" || {
+        existing_token=""
+        existing_expires_at=""
+      }
+    fi
+    case "$existing_expires_at" in
+      ""|*[!0-9]*) ;;
+      *)
+        if [ "$existing_expires_at" -gt "$now" ]; then
+          active_timer=1
+          previous_token="$existing_token"
+          previous_expires_at="$existing_expires_at"
+        fi
+        ;;
+    esac
+    if [ "$active_timer" -ne 1 ]; then
+      echo "sleep is already disabled without an active bluemeth timer; resolve the existing owner or run bluemeth off" >&2
+      exit 1
+    fi
+  fi
 
   /bin/mkdir -p "$token_dir"
   /bin/chmod 755 "$token_dir"
 
   umask 022
   printf "%s %s\n" "$token" "$expires_at" > "$token_file"
+  /bin/chmod 644 "$token_file"
 
   if ! /usr/bin/pmset -a disablesleep 1; then
     current_token=""
@@ -155,7 +231,12 @@ expire_script='
       read -r current_token _ < "$token_file" || current_token=""
     fi
     if [ "$current_token" = "$token" ]; then
-      /bin/rm -f "$token_file"
+      if [ -n "$previous_token" ]; then
+        printf "%s %s\n" "$previous_token" "$previous_expires_at" > "$token_file"
+        /bin/chmod 644 "$token_file"
+      else
+        /bin/rm -f "$token_file"
+      fi
     fi
     exit 1
   fi
@@ -166,4 +247,5 @@ expire_script='
   ) >/dev/null 2>&1 </dev/null &
 ' sh "$TOKEN_FILE" "$token" "$seconds" "$LOCK_FILE" "$expire_script"
 
+echo "warning: a closed, running MacBook may overheat in a bag or sleeve; keep it ventilated" >&2
 echo "on: ${minutes}m"

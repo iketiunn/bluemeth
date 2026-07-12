@@ -6,7 +6,10 @@ sh -n install.sh
 bash test/behavior.sh
 
 bin/bluemeth -h |
-  grep -F 'usage: bluemeth [MIN=60] | off | status | -h' >/dev/null
+  grep -F 'usage: bluemeth [MIN=60] [--force] | off | status | -h' >/dev/null
+
+bin/bluemeth -h |
+  grep -F 'max: 120m (1440m with --force)' >/dev/null
 
 grep -F 'version="v1.0.2"' install.sh >/dev/null
 grep -F 'usage: install.sh [main]' install.sh >/dev/null

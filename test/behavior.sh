@@ -5,7 +5,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="$ROOT_DIR/bin/bluemeth"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/bluemeth.XXXXXX")"
 FAKE_BIN="$TEST_ROOT/bin"
-TOKEN_FILE="$TEST_ROOT/run/disablesleep.token"
+RUNTIME_DIR="$TEST_ROOT/run"
+TOKEN_FILE="$RUNTIME_DIR/disablesleep.token"
+LOCK_FILE="$TEST_ROOT/bluemeth.lock"
 LOG_FILE="$TEST_ROOT/commands.log"
 STATE_FILE="$TEST_ROOT/sleep-disabled"
 SUBJECT="$TEST_ROOT/bluemeth"
@@ -126,13 +128,20 @@ trap 'rmdir "$lock_dir"' EXIT
 "$@"
 SH
 
+  cat > "$FAKE_BIN/touch" <<'SH'
+#!/usr/bin/env bash
+printf 'touch-umask %s\n' "$(umask)" >> "$BLUEMETH_TEST_LOG"
+exec /usr/bin/touch "$@"
+SH
+
   chmod +x "$FAKE_BIN"/*
 
   sed \
     -e "s|TOKEN_FILE=\"/var/run/bluemeth/disablesleep.token\"|TOKEN_FILE=\"$TOKEN_FILE\"|" \
-    -e "s|LOCK_FILE=\"/var/run/bluemeth.lock\"|LOCK_FILE=\"$TEST_ROOT/bluemeth.lock\"|" \
+    -e "s|LOCK_FILE=\"/var/run/bluemeth.lock\"|LOCK_FILE=\"$LOCK_FILE\"|" \
     -e "s|/usr/bin/sudo|$FAKE_BIN/sudo|g" \
     -e "s|/usr/bin/lockf|$FAKE_BIN/lockf|g" \
+    -e "s|/usr/bin/touch|$FAKE_BIN/touch|g" \
     -e "s|/usr/bin/pmset|$FAKE_BIN/pmset|g" \
     -e "s|/usr/sbin/ioreg|$FAKE_BIN/ioreg|g" \
     -e "s|/bin/sleep|$FAKE_BIN/sleep|g" \
@@ -155,17 +164,137 @@ run_bluemeth() {
 
 test_leading_zero_duration_is_decimal() {
   local output
-  output="$(run_bluemeth 08)"
+  output="$(run_bluemeth 08 2>/dev/null)"
 
   assert_contains 'on: 8m' "$output"
   wait_for_log 'pmset -a disablesleep 1'
+}
+
+test_explicit_empty_duration_is_rejected() {
+  local output result
+
+  set +e
+  output="$(run_bluemeth '' 2>&1)"
+  result=$?
+  set -e
+
+  [[ "$result" -ne 0 ]] || fail 'explicit empty duration started the default timer'
+  assert_contains 'usage: bluemeth' "$output"
+  if grep -Fq -- 'pmset -a disablesleep 1' "$LOG_FILE"; then
+    fail 'explicit empty duration changed sleep state'
+  fi
+}
+
+test_duration_above_two_hours_requires_force() {
+  local output result
+
+  set +e
+  output="$(run_bluemeth 121 2>&1)"
+  result=$?
+  set -e
+
+  [[ "$result" -ne 0 ]] || fail 'duration above two hours succeeded without --force'
+  assert_contains 'minutes above 120 require --force' "$output"
+  if grep -Fq -- 'pmset -a disablesleep 1' "$LOG_FILE"; then
+    fail 'rejected duration changed sleep state'
+  fi
+}
+
+test_force_allows_one_day_ceiling() {
+  local output
+
+  output="$(run_bluemeth 1440 --force 2>&1)"
+
+  assert_contains 'warning: a closed, running MacBook may overheat in a bag or sleeve; keep it ventilated' "$output"
+  assert_contains 'on: 1440m' "$output"
+  wait_for_log 'pmset -a disablesleep 1'
+}
+
+test_force_does_not_bypass_one_day_ceiling() {
+  local output result
+
+  set +e
+  output="$(run_bluemeth 1441 --force 2>&1)"
+  result=$?
+  set -e
+
+  [[ "$result" -ne 0 ]] || fail '--force bypassed one-day ceiling'
+  assert_contains 'minutes must be <= 1440' "$output"
+}
+
+test_warning_is_stderr_and_success_is_stdout() {
+  local stdout_file="$TEST_ROOT/stdout"
+  local stderr_file="$TEST_ROOT/stderr"
+
+  run_bluemeth 1 >"$stdout_file" 2>"$stderr_file"
+
+  [[ "$(cat "$stdout_file")" == 'on: 1m' ]] || fail 'activation stdout changed'
+  assert_contains 'warning: a closed, running MacBook may overheat in a bag or sleeve; keep it ventilated' "$(cat "$stderr_file")"
+}
+
+test_enable_refuses_unowned_disabled_sleep_state() {
+  local output result
+
+  printf '1\n' > "$STATE_FILE"
+
+  set +e
+  output="$(run_bluemeth 30 2>&1)"
+  result=$?
+  set -e
+
+  [[ "$result" -ne 0 ]] || fail 'enable took ownership of an ambiguous disabled sleep state'
+  assert_contains 'sleep is already disabled without an active bluemeth timer' "$output"
+  [[ ! -f "$TOKEN_FILE" ]] || fail 'refused enable created a token'
+}
+
+test_enable_refuses_unknown_sleep_state() {
+  local BLUEMETH_TEST_PMSET_FAIL_ARGS='-g'
+  local output result
+
+  set +e
+  output="$(run_bluemeth 30 2>&1)"
+  result=$?
+  set -e
+
+  [[ "$result" -ne 0 ]] || fail 'enable proceeded without a readable sleep state'
+  assert_contains 'unable to determine current sleep state' "$output"
+  [[ ! -f "$TOKEN_FILE" ]] || fail 'unknown sleep state created a token'
+  if grep -Fq -- 'pmset -a disablesleep 1' "$LOG_FILE"; then
+    fail 'unknown sleep state changed sleep settings'
+  fi
+}
+
+test_failed_replacement_preserves_previous_timer() {
+  local BLUEMETH_TEST_PMSET_FAIL_ARGS='-a disablesleep 1'
+  local original_token='previous 9999999999'
+  local output result
+
+  printf '%s\n' "$original_token" > "$TOKEN_FILE"
+  printf '1\n' > "$STATE_FILE"
+
+  set +e
+  output="$(run_bluemeth 30 2>&1)"
+  result=$?
+  set -e
+
+  [[ "$result" -ne 0 ]] || fail 'failed replacement reported success'
+  [[ -z "$output" ]] || fail 'failed replacement emitted success output or warning'
+  [[ "$(cat "$TOKEN_FILE")" == "$original_token" ]] || fail 'failed replacement destroyed the previous timer token'
+}
+
+test_runtime_lock_is_private_without_hiding_timer_state() {
+  run_bluemeth 1 >/dev/null 2>&1
+
+  [[ "$(/usr/bin/stat -f '%Lp' "$RUNTIME_DIR")" == 755 ]] || fail 'timer directory is not readable for status'
+  [[ "$(/usr/bin/stat -f '%Lp' "$LOCK_FILE")" == 600 ]] || fail 'lock file is not mode 600'
+  grep -Eq '^touch-umask 0?077$' "$LOG_FILE" || fail 'lock file was not created under umask 077'
 }
 
 test_expiry_sleeps_when_closed_lid_normally_sleeps() {
   local BLUEMETH_TEST_LID=Yes
   local BLUEMETH_TEST_LID_CAUSES_SLEEP=Yes
 
-  run_bluemeth 1 >/dev/null
+  run_bluemeth 1 >/dev/null 2>&1
   wait_for_log 'pmset sleepnow'
 }
 
@@ -173,19 +302,22 @@ test_expiry_does_not_sleep_when_lid_is_open() {
   local BLUEMETH_TEST_LID=No
   local BLUEMETH_TEST_LID_CAUSES_SLEEP=Yes
 
-  run_bluemeth 1 >/dev/null
+  run_bluemeth 1 >/dev/null 2>&1
   sleep 0.1
   if grep -Fq -- 'pmset sleepnow' "$LOG_FILE"; then
     fail 'open lid requested sleep'
   fi
 }
 
-test_expiry_sleeps_when_lid_closed_in_external_display_clamshell_mode() {
+test_expiry_leaves_external_display_clamshell_mode_awake() {
   local BLUEMETH_TEST_LID=Yes
   local BLUEMETH_TEST_LID_CAUSES_SLEEP=No
 
-  run_bluemeth 1 >/dev/null
-  wait_for_log 'pmset sleepnow'
+  run_bluemeth 1 >/dev/null 2>&1
+  sleep 0.1
+  if grep -Fq -- 'pmset sleepnow' "$LOG_FILE"; then
+    fail 'external-display clamshell mode requested sleep'
+  fi
 }
 
 test_off_sleeps_when_closed_lid_normally_sleeps() {
@@ -194,9 +326,22 @@ test_off_sleeps_when_closed_lid_normally_sleeps() {
 
   printf 'token 9999999999\n' > "$TOKEN_FILE"
   printf '1\n' > "$STATE_FILE"
-  run_bluemeth off >/dev/null
+  run_bluemeth off >/dev/null 2>&1
 
   wait_for_log 'pmset sleepnow'
+}
+
+test_off_leaves_external_display_clamshell_mode_awake() {
+  local BLUEMETH_TEST_LID=Yes
+  local BLUEMETH_TEST_LID_CAUSES_SLEEP=No
+
+  printf 'token 9999999999\n' > "$TOKEN_FILE"
+  printf '1\n' > "$STATE_FILE"
+  run_bluemeth off >/dev/null 2>&1
+
+  if grep -Fq -- 'pmset sleepnow' "$LOG_FILE"; then
+    fail 'off requested sleep in external-display clamshell mode'
+  fi
 }
 
 test_off_failure_does_not_report_success_or_remove_token() {
@@ -225,14 +370,14 @@ test_new_session_cannot_be_cancelled_by_expiring_session() {
   local BLUEMETH_TEST_BLOCK_DISABLE_RELEASE="$release"
   local replacement_pid
 
-  run_bluemeth 1 >/dev/null
+  run_bluemeth 1 >/dev/null 2>&1
   wait_for_file "$ready"
 
   BLUEMETH_TEST_BLOCK_DISABLE_READY='' \
     BLUEMETH_TEST_BLOCK_DISABLE_RELEASE='' \
     BLUEMETH_TEST_SLEEP_RELEASE="$replacement_expiry" \
     BLUEMETH_TEST_LOCK_WAIT_READY="$replacement_wait" \
-    run_bluemeth 1 >/dev/null &
+    run_bluemeth 1 >/dev/null 2>&1 &
   replacement_pid=$!
   wait_for_file "$replacement_wait"
   touch "$release"
@@ -258,16 +403,36 @@ test_new_session_cannot_be_cancelled_by_expiring_session() {
 setup
 test_leading_zero_duration_is_decimal
 setup
+test_explicit_empty_duration_is_rejected
+setup
+test_duration_above_two_hours_requires_force
+setup
+test_force_allows_one_day_ceiling
+setup
+test_force_does_not_bypass_one_day_ceiling
+setup
+test_warning_is_stderr_and_success_is_stdout
+setup
+test_enable_refuses_unowned_disabled_sleep_state
+setup
+test_enable_refuses_unknown_sleep_state
+setup
+test_failed_replacement_preserves_previous_timer
+setup
+test_runtime_lock_is_private_without_hiding_timer_state
+setup
 test_expiry_sleeps_when_closed_lid_normally_sleeps
 setup
 test_expiry_does_not_sleep_when_lid_is_open
 setup
-test_expiry_sleeps_when_lid_closed_in_external_display_clamshell_mode
+test_expiry_leaves_external_display_clamshell_mode_awake
 setup
 test_off_sleeps_when_closed_lid_normally_sleeps
+setup
+test_off_leaves_external_display_clamshell_mode_awake
 setup
 test_off_failure_does_not_report_success_or_remove_token
 setup
 test_new_session_cannot_be_cancelled_by_expiring_session
 
-echo '7 passed, 0 failed'
+echo '17 passed, 0 failed'
