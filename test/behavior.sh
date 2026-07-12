@@ -29,6 +29,16 @@ assert_contains() {
   [[ "$haystack" == *"$needle"* ]] || fail "missing: $needle"
 }
 
+file_mode() {
+  local path="$1"
+
+  if [[ "$(/usr/bin/uname -s)" == Darwin ]]; then
+    /usr/bin/stat -f '%Lp' "$path"
+  else
+    /usr/bin/stat -c '%a' "$path"
+  fi
+}
+
 wait_for_log() {
   local needle="$1"
 
@@ -284,9 +294,10 @@ test_failed_replacement_preserves_previous_timer() {
 
 test_runtime_lock_is_private_without_hiding_timer_state() {
   run_bluemeth 1 >/dev/null 2>&1
+  wait_for_log 'pmset -a disablesleep 0'
 
-  [[ "$(/usr/bin/stat -f '%Lp' "$RUNTIME_DIR")" == 755 ]] || fail 'timer directory is not readable for status'
-  [[ "$(/usr/bin/stat -f '%Lp' "$LOCK_FILE")" == 600 ]] || fail 'lock file is not mode 600'
+  [[ "$(file_mode "$RUNTIME_DIR")" == 755 ]] || fail 'timer directory is not readable for status'
+  [[ "$(file_mode "$LOCK_FILE")" == 600 ]] || fail 'lock file is not mode 600'
   grep -Eq '^touch-umask 0?077$' "$LOG_FILE" || fail 'lock file was not created under umask 077'
 }
 
