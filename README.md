@@ -14,7 +14,7 @@ sudo pmset -a disablesleep 1
 ## Install latest stable
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/iketiunn/bluemeth/v1.0.2/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/iketiunn/bluemeth/v1.0.3/install.sh | sh
 ```
 
 ## Install main

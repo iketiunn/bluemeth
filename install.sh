@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-version="v1.0.2"
+version="v1.0.3"
 
 case "${1-}" in
   "")

@@ -11,7 +11,7 @@ bin/bluemeth -h |
 bin/bluemeth -h |
   grep -F 'max: 120m (1440m with --force)' >/dev/null
 
-grep -F 'version="v1.0.2"' install.sh >/dev/null
+grep -F 'version="v1.0.3"' install.sh >/dev/null
 grep -F 'usage: install.sh [main]' install.sh >/dev/null
 # shellcheck disable=SC2016
 grep -F 'raw.githubusercontent.com/iketiunn/bluemeth/${version}/bin/bluemeth' install.sh >/dev/null
