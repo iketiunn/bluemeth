@@ -14,7 +14,7 @@ sudo pmset -a disablesleep 1
 ## Install latest stable
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/iketiunn/bluemeth/v1.0.1/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/iketiunn/bluemeth/v1.0.2/install.sh | sh
 ```
 
 ## Install main
@@ -40,6 +40,19 @@ Max duration: `1440` minutes.
 Timer state lives in `/var/run/bluemeth/disablesleep.token`, so it does not
 survive reboot. Newer timers replace older timer tokens, which prevents an old
 timer from turning sleep back on during a newer run.
+
+If bluemeth crashes or macOS reboots during a session, the timer may disappear
+while `disablesleep` remains enabled. Restore normal sleep with:
+
+```sh
+bluemeth off
+```
+
+If bluemeth is unavailable, restore the setting directly with:
+
+```sh
+sudo pmset -a disablesleep 0
+```
 
 ## Status
 
@@ -88,6 +101,6 @@ Do not put the MacBook in a bag while active. Tiny CLI, real heat, bad physics.
 
 ```sh
 bash test/smoke.sh
-shellcheck bin/bluemeth install.sh test/smoke.sh
+shellcheck bin/bluemeth install.sh test/smoke.sh test/behavior.sh
 git diff --check
 ```

@@ -3,11 +3,12 @@ set -euo pipefail
 
 bash -n bin/bluemeth
 sh -n install.sh
+bash test/behavior.sh
 
 bin/bluemeth -h |
   grep -F 'usage: bluemeth [MIN=60] | off | status | -h' >/dev/null
 
-grep -F 'version="v1.0.1"' install.sh >/dev/null
+grep -F 'version="v1.0.2"' install.sh >/dev/null
 grep -F 'usage: install.sh [main]' install.sh >/dev/null
 # shellcheck disable=SC2016
 grep -F 'raw.githubusercontent.com/iketiunn/bluemeth/${version}/bin/bluemeth' install.sh >/dev/null

@@ -4,6 +4,7 @@ set -euo pipefail
 DEFAULT_MINUTES=60
 MAX_MINUTES=1440
 TOKEN_FILE="/var/run/bluemeth/disablesleep.token"
+LOCK_FILE="/var/run/bluemeth.lock"
 
 help() {
   echo "bluemeth - timed macOS disablesleep"
@@ -71,41 +72,73 @@ case "$arg" in
     ;;
   off)
     # shellcheck disable=SC2016
-    /usr/bin/sudo /bin/sh -c '
+    /usr/bin/sudo /usr/bin/lockf -k "$LOCK_FILE" /bin/sh -c '
       token_file="$1"
-      /usr/bin/pmset -a disablesleep 0 && /bin/rm -f "$token_file"
+      if ! /usr/bin/pmset -a disablesleep 0; then
+        exit 1
+      fi
+
+      /bin/rm -f "$token_file"
+
+      root_domain="$(/usr/sbin/ioreg -r -n IOPMrootDomain -d 1 -l -w 0 2>/dev/null || true)"
+      if printf "%s\n" "$root_domain" | /usr/bin/grep -Fq "\"AppleClamshellState\" = Yes"; then
+        /usr/bin/pmset sleepnow
+      fi
     ' sh "$TOKEN_FILE"
     echo "off"
     exit 0
     ;;
 esac
 
-if [[ ! "$arg" =~ ^[0-9]+$ ]]; then
+if [[ ! "$arg" =~ ^[0-9]{1,4}$ ]]; then
   help
   exit 1
 fi
 
-if (( arg <= 0 )); then
+minutes=$((10#$arg))
+
+if (( minutes <= 0 )); then
   echo "minutes must be > 0" >&2
   exit 1
 fi
 
-if (( arg > MAX_MINUTES )); then
+if (( minutes > MAX_MINUTES )); then
   echo "minutes must be <= ${MAX_MINUTES}" >&2
   exit 1
 fi
 
-minutes="$arg"
 seconds=$((minutes * 60))
 token="$(/bin/date +%s)-$$-$(/usr/bin/uuidgen)"
+# shellcheck disable=SC2016
+expire_script='
+  token_file="$1"
+  token="$2"
+
+  current_token=""
+  if [ -f "$token_file" ]; then
+    read -r current_token _ < "$token_file" || current_token=""
+  fi
+  if [ "$current_token" = "$token" ]; then
+    if /usr/bin/pmset -a disablesleep 0; then
+      /bin/rm -f "$token_file"
+
+      root_domain="$(/usr/sbin/ioreg -r -n IOPMrootDomain -d 1 -l -w 0 2>/dev/null || true)"
+      if printf "%s\n" "$root_domain" | /usr/bin/grep -Fq "\"AppleClamshellState\" = Yes"; then
+        /usr/bin/pmset sleepnow
+      fi
+    fi
+  fi
+'
 
 # shellcheck disable=SC2016
-/usr/bin/sudo /bin/sh -c '
+/usr/bin/sudo /usr/bin/lockf -k "$LOCK_FILE" /bin/sh -c '
   set -e
 
   token_file="$1"
   token="$2"
   seconds="$3"
+  lock_file="$4"
+  expire_script="$5"
   token_dir="${token_file%/*}"
   now="$(/bin/date +%s)"
   expires_at=$((now + seconds))
@@ -129,17 +162,8 @@ token="$(/bin/date +%s)-$$-$(/usr/bin/uuidgen)"
 
   (
     /bin/sleep "$seconds"
-
-    current_token=""
-    if [ -f "$token_file" ]; then
-      read -r current_token _ < "$token_file" || current_token=""
-    fi
-    if [ "$current_token" = "$token" ]; then
-      if /usr/bin/pmset -a disablesleep 0; then
-        /bin/rm -f "$token_file"
-      fi
-    fi
+    /usr/bin/lockf -k "$lock_file" /bin/sh -c "$expire_script" sh "$token_file" "$token"
   ) >/dev/null 2>&1 </dev/null &
-' sh "$TOKEN_FILE" "$token" "$seconds"
+' sh "$TOKEN_FILE" "$token" "$seconds" "$LOCK_FILE" "$expire_script"
 
 echo "on: ${minutes}m"
