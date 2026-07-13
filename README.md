@@ -25,6 +25,14 @@ curl -fsSL https://raw.githubusercontent.com/iketiunn/bluemeth/main/install.sh |
 
 Make sure `~/.local/bin` is in your `PATH`.
 
+## ⚠️ Warning
+
+This changes system-wide macOS power settings with `sudo`.
+
+Every activation warns that a closed, running MacBook may overheat in a bag or
+sleeve. Keep it ventilated and use your judgment; the timer is not a thermal
+safety guarantee.
+
 ## Usage
 
 ```sh
@@ -90,14 +98,6 @@ Use `caffeinate` for normal idle-sleep or command-scoped work:
 caffeinate -i make
 caffeinate -t 3600
 ```
-
-## Warning
-
-This changes system-wide macOS power settings with `sudo`.
-
-Every activation warns that a closed, running MacBook may overheat in a bag or
-sleeve. Keep it ventilated and use your judgment; the timer is not a thermal
-safety guarantee.
 
 ## Uninstall
 
